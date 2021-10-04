@@ -26,13 +26,23 @@ contract EVRYDistributor is Ownable, ReentrancyGuard {
     cap = _cap;
   }
 
-  function release(uint256 amount) external nonReentrant onlyOwner {
+  function release(uint256 amount) external nonReentrant onlyOwner returns (uint256) {
 
-    require(released.add(amount) <= cap, "release: cap exceed");
-    require(amount <= evry.balanceOf(address(this)), "release: not enough evry");
-    
-    released = released.add(amount);
-    evry.safeTransfer(msg.sender, amount);
-  }
+    uint256 releasedAmount = amount;
+    uint256 evryBalance = evry.balanceOf(address(this));
+
+    if (released.add(amount) >= cap) {
+      releasedAmount = cap.sub(released);
+    } 
+
+    if (releasedAmount > evryBalance) {
+      releasedAmount = evryBalance;
+    }
+
+    released = released.add(releasedAmount);
+    evry.safeTransfer(msg.sender, releasedAmount);
+
+    return releasedAmount;
+}
   
 }

@@ -1,2 +1,2 @@
 # Evry Finance - Farm
-Smart contract to manager Evry Yeild Farming
+Smart contract to manage Evry Yield Farming

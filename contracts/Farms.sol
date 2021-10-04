@@ -63,6 +63,8 @@ contract Farms is ReentrancyGuardUpgradeable, OwnableUpgradeable {
   event Deposit(address indexed user, uint256 indexed pid, uint256 amount, address indexed to);
   event Withdraw(address indexed user, uint256 indexed pid, uint256 amount, address indexed to);
   event Harvest(address indexed user, uint256 indexed pid, uint256 amount);
+  event SetEvryPerBlock(address indexed sender, uint256 evryPerBlock);
+
 
   function initialize(
     EVRYDistributor _evryDistributor,
@@ -77,7 +79,10 @@ contract Farms is ReentrancyGuardUpgradeable, OwnableUpgradeable {
   }
 
   function setEvryPerBlock(uint256 _evryPerBlock) external onlyOwner {
+    massUpdatePools();
     evryPerBlock = _evryPerBlock;
+
+    emit SetEvryPerBlock(msg.sender, _evryPerBlock);
   }
 
   /// @notice Add a new lp to the pool. Can only be called by the owner.
@@ -90,6 +95,8 @@ contract Farms is ReentrancyGuardUpgradeable, OwnableUpgradeable {
     uint256 _startBlock
   ) external onlyOwner {
     require(!isDuplicatedPool(_stakeToken), "Farms::addPool:: stakeToken dup");
+
+    massUpdatePools();
 
     uint256 lastRewardBlock = block.number > _startBlock ? block.number : _startBlock;
     totalAllocPoint = totalAllocPoint.add(allocPoint);
@@ -106,7 +113,7 @@ contract Farms is ReentrancyGuardUpgradeable, OwnableUpgradeable {
   /// @param _pid The index of the pool. See `poolInfo`.
   /// @param _allocPoint new AP of the pool
   function setPoolAllocation(uint256 _pid, uint256 _allocPoint) external onlyOwner {
-    updatePool(_pid);
+    massUpdatePools();
 
     // Remove current AP value of pool _pid from total AP, then add new one.
     totalAllocPoint = totalAllocPoint.sub(poolInfo[_pid].allocPoint).add(_allocPoint);
@@ -135,15 +142,19 @@ contract Farms is ReentrancyGuardUpgradeable, OwnableUpgradeable {
     // Effects
     _harvest(_for, pid);
 
-    user.amount = user.amount.add(amount);
-    user.rewardDebt = user.rewardDebt.add(amount.mul(pool.accEVRYPerShare) / ACC_EVRY_PRECISION);
+    uint256 preAmount = stakeTokens[pid].balanceOf(address(this));
+    stakeTokens[pid].safeTransferFrom(msg.sender, address(this), amount);
+    uint256 postAmount = stakeTokens[pid].balanceOf(address(this));
+    uint256 actualAmount = postAmount.sub(preAmount);
+
+    user.amount = user.amount.add(actualAmount);
+    user.rewardDebt = user.rewardDebt.add(actualAmount.mul(pool.accEVRYPerShare) / ACC_EVRY_PRECISION);
     if (user.fundedBy == address(0)) user.fundedBy = msg.sender;
 
     // Interactions
-    stakeTokens[pid].safeTransferFrom(msg.sender, address(this), amount);
-    if (isEvryPool(pool.lpToken)) evrySupply = evrySupply.add(amount);
+    if (isEvryPool(pool.lpToken)) evrySupply = evrySupply.add(actualAmount);
 
-    emit Deposit(msg.sender, pid, amount, _for);
+    emit Deposit(msg.sender, pid, actualAmount, _for);
   }
 
   /// @notice Withdraw LP tokens.
@@ -158,7 +169,7 @@ contract Farms is ReentrancyGuardUpgradeable, OwnableUpgradeable {
     PoolInfo memory pool = updatePool(pid);
     UserInfo storage user = userInfo[pid][_for];
 
-    require(user.fundedBy == msg.sender, "Farms::withdraw:: only funder");
+    require(user.fundedBy == msg.sender || msg.sender == _for, "Farms::withdraw:: only funder");
     require(user.amount >= amount, "Farms::withdraw:: amount exceeds");
 
     // Effects
@@ -166,10 +177,10 @@ contract Farms is ReentrancyGuardUpgradeable, OwnableUpgradeable {
 
     user.rewardDebt = user.rewardDebt.sub(amount.mul(pool.accEVRYPerShare) / ACC_EVRY_PRECISION);
     user.amount = user.amount.sub(amount);
-    if (user.amount == 0) user.fundedBy = address(0);
-
+    
     // Interactions
-    stakeTokens[pid].safeTransfer(msg.sender, amount);
+    stakeTokens[pid].safeTransfer(user.fundedBy, amount);
+    if (user.amount == 0) user.fundedBy = address(0);
     if (isEvryPool(pool.lpToken)) evrySupply = evrySupply.sub(amount);
 
     emit Withdraw(msg.sender, pid, amount, _for);
@@ -235,9 +246,9 @@ contract Farms is ReentrancyGuardUpgradeable, OwnableUpgradeable {
         uint256 blocks = block.number.sub(pool.lastRewardBlock);
         uint256 evryReward = (blocks.mul(evryPerBlock).mul(pool.allocPoint)).div(totalAllocPoint);
 
-        evryDistributor.release(evryReward);
+        uint256 evryReleased = evryDistributor.release(evryReward);
 
-        pool.accEVRYPerShare = pool.accEVRYPerShare.add((evryReward.mul(ACC_EVRY_PRECISION)).div(stakeTokenSupply));
+        pool.accEVRYPerShare = pool.accEVRYPerShare.add((evryReleased.mul(ACC_EVRY_PRECISION)).div(stakeTokenSupply));
       }
       pool.lastRewardBlock = block.number;
       poolInfo[pid] = pool;
@@ -277,6 +288,13 @@ contract Farms is ReentrancyGuardUpgradeable, OwnableUpgradeable {
   /// @notice Returns if stakeToken is evry
   function isEvryPool(IERC20 _stakeToken) internal view returns (bool) {
     return _stakeToken == evry;
+  }
+
+  function massUpdatePools() public {
+    uint256 length = poolInfo.length;
+    for (uint256 pid = 0; pid < length; pid++) {
+      updatePool(pid);
+    }
   }
 
 }
