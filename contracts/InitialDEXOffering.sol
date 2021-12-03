@@ -17,14 +17,14 @@ contract InitialDEXOffering is Ownable, ReentrancyGuard {
   uint256 private constant RATIO_PRECISION = 1e18;
 
   /// @dev constructor
-  uint256 public startBlock;
-  uint256 public endBlock;
+  uint256 public immutable startBlock;
+  uint256 public immutable endBlock;
 
-  IERC20 public offeringToken;
-  IERC20 public spendingToken;
+  IERC20 public immutable offeringToken;
+  IERC20 public immutable spendingToken;
   uint256 public tokenRatio;
-  uint256 public minSpendingPerTx;
-  uint256 public maxSpendingPerTx;
+  uint256 public immutable minSpendingPerTx;
+  uint256 public immutable maxSpendingPerTx;
 
   uint256 public offered;
 
@@ -67,7 +67,7 @@ contract InitialDEXOffering is Ownable, ReentrancyGuard {
     uint256 remainingOffering = offeringToken.balanceOf(address(this));
     if (actualOffering > remainingOffering) {
       actualOffering = remainingOffering;
-      actualSpending = actualOffering.div(tokenRatio).mul(RATIO_PRECISION);
+      actualSpending = actualOffering.mul(RATIO_PRECISION).div(tokenRatio);
     }
 
     uint256 preBalance = spendingToken.balanceOf(address(this));

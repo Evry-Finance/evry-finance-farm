@@ -14,24 +14,24 @@ contract EarnOtherFixedAPR is Ownable, ReentrancyGuard {
   using SafeMath for uint256;
   using SafeERC20 for ERC20;
 
-  /// @dev define from constructor 
+  /// @dev define from constructor
   uint256 private constant BLOCK_PER_DAY = 28800;
   uint256 private constant DAY_PER_YEAR = 365;
   uint256 private constant RATIO_PRECISION = 1e18;
   uint256 private constant PERCENTAGE_PRECISION = 1e2;
   uint256 private constant APR_PRECISION = 1e18;
 
-  /// @dev define from constructor 
-  uint256 public startBlock;
-  uint256 public endBlock;
-  uint256 public claimableBlock;
-  ERC20 public stakedToken;
-  ERC20 public rewardToken;
+  /// @dev define from constructor
+  uint256 public immutable startBlock;
+  uint256 public immutable endBlock;
+  uint256 public immutable claimableBlock;
+  ERC20 public immutable stakedToken;
+  ERC20 public immutable rewardToken;
 
   /// @dev define fixed APR percentage and reward ratio from constructor
-  uint256 public apr;
-  uint256 public cap;
-  uint256 public tokenRatio;
+  uint256 public immutable apr;
+  uint256 public immutable cap;
+  uint256 public immutable tokenRatio;
   uint256 private rewardPerBlockPrecisionFactor;
   uint256 private actualTokenRatio;
   uint256 private rewardPerBlock;
@@ -52,7 +52,6 @@ contract EarnOtherFixedAPR is Ownable, ReentrancyGuard {
   event Withdraw(address indexed user, uint256 amount);
   event Harvest(address indexed user, uint256 amount);
   event RecoveryReward(address indexed user, uint256 amount);
-  event EmergencyWithdraw(address indexed user, uint256 amount);
 
   constructor(
     ERC20 _stakedToken,
@@ -82,7 +81,7 @@ contract EarnOtherFixedAPR is Ownable, ReentrancyGuard {
       actualTokenRatio = _tokenRatio.div(10**(_stakedToken.decimals() - _rewardToken.decimals()));
     }
 
-    rewardPerBlock = apr.div(BLOCK_PER_DAY.mul(DAY_PER_YEAR)).mul(actualTokenRatio);
+    rewardPerBlock = _apr.mul(actualTokenRatio).div(BLOCK_PER_DAY.mul(DAY_PER_YEAR));
     rewardPerBlockPrecisionFactor = RATIO_PRECISION.mul(PERCENTAGE_PRECISION).mul(APR_PRECISION);
 
     transferOwnership(_admin);
@@ -111,6 +110,8 @@ contract EarnOtherFixedAPR is Ownable, ReentrancyGuard {
       _actualAmount.mul((endBlock.sub(_lastRewardBlock())).mul(rewardPerBlock)).div(rewardPerBlockPrecisionFactor)
     );
 
+    require(rewardDebt <= rewardToken.balanceOf(address(this)), "insufficient reward reserve");
+
     UserInfo storage user = userInfo[msg.sender];
     user.amount = user.amount.add(_actualAmount);
     user.lastRewardBlock = _lastRewardBlock();
@@ -128,7 +129,6 @@ contract EarnOtherFixedAPR is Ownable, ReentrancyGuard {
     UserInfo storage user = userInfo[msg.sender];
     if (user.amount > 0 && block.number > claimableBlock) {
       uint256 _reward = _calculateReward(user.amount, user.lastRewardBlock);
-      require(_reward <= rewardToken.balanceOf(address(this)), "insufficeint reward");
       rewardToken.safeTransfer(msg.sender, _reward);
       rewardDebt = rewardDebt.sub(_reward);
       emit Harvest(msg.sender, _reward);
@@ -152,34 +152,6 @@ contract EarnOtherFixedAPR is Ownable, ReentrancyGuard {
 
       emit Withdraw(msg.sender, _withdrawAmount);
     }
-  }
-
-  /// @notice while LP is locked, but reward is insufficient user have right to emergency withdraw thier LP
-  /// @notice all the rewards of actor will be cancelled and not be able to claim in the future
-  function emergencyWithdraw() external nonReentrant {
-    UserInfo storage user = userInfo[msg.sender];
-    uint256 rewards = _calculateReward(user.amount, user.lastRewardBlock);
-
-    if (block.number < endBlock) {
-      require(
-        rewards > rewardToken.balanceOf(address(this)),
-        "not allow before end period"
-      );
-      rewards = user.amount.mul((endBlock.sub(user.lastRewardBlock)).mul(rewardPerBlock)).div(
-        rewardPerBlockPrecisionFactor
-      );
-    }
-
-    uint256 withdrawAmount = user.amount;
-    stakedToken.safeTransfer(msg.sender, withdrawAmount);
-
-    user.amount = 0;
-    user.lastRewardBlock = endBlock;
-
-    totalStaked = totalStaked.sub(withdrawAmount);
-    rewardDebt = rewardDebt.sub(rewards);
-
-    emit EmergencyWithdraw(msg.sender, withdrawAmount);
   }
 
   function recoveryReward(address _for) external onlyOwner {

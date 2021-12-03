@@ -14,25 +14,25 @@ contract EarnOtherFixedAPRLockReward is Ownable, ReentrancyGuard {
   using SafeMath for uint256;
   using SafeERC20 for ERC20;
 
-  /// @dev define from constructor 
+  /// @dev define from constructor
   uint256 private constant BLOCK_PER_DAY = 28800;
   uint256 private constant DAY_PER_YEAR = 365;
   uint256 private constant RATIO_PRECISION = 1e18;
   uint256 private constant PERCENTAGE_PRECISION = 1e2;
   uint256 private constant APR_PRECISION = 1e18;
 
-  /// @dev define from constructor 
-  uint256 public startBlock;
-  uint256 public endBlock;
-  uint256 public claimableBlock;
-  ERC20 public stakedToken;
-  ERC20 public rewardToken;
+  /// @dev define from constructor
+  uint256 public immutable startBlock;
+  uint256 public immutable endBlock;
+  uint256 public immutable claimableBlock;
+  ERC20 public immutable stakedToken;
+  ERC20 public immutable rewardToken;
 
   /// @dev define fixed APR, ratio and reward attrs from constructor
-  uint256 public apr;
+  uint256 public immutable apr;
   uint256 private rewardPerBlock;
   uint256 private rewardPerBlockPrecisionFactor;
-  uint256 public tokenRatio;
+  uint256 public immutable tokenRatio;
   uint256 private actualTokenRatio;
 
   /// @dev Pool debt total staked from all users
@@ -79,7 +79,7 @@ contract EarnOtherFixedAPRLockReward is Ownable, ReentrancyGuard {
       actualTokenRatio = _tokenRatio.div(10**(_stakedToken.decimals() - _rewardToken.decimals()));
     }
 
-    rewardPerBlock = apr.div(BLOCK_PER_DAY.mul(DAY_PER_YEAR)).mul(actualTokenRatio);
+    rewardPerBlock = _apr.mul(actualTokenRatio).div(BLOCK_PER_DAY.mul(DAY_PER_YEAR));
     rewardPerBlockPrecisionFactor = RATIO_PRECISION.mul(PERCENTAGE_PRECISION).mul(APR_PRECISION);
 
     transferOwnership(_admin);
@@ -97,12 +97,8 @@ contract EarnOtherFixedAPRLockReward is Ownable, ReentrancyGuard {
     totalStaked = totalStaked.add(actualAmount);
     uint256 lastRewardBlock = block.number;
 
-    if (block.number < startBlock) {
-      lastRewardBlock = startBlock;
-    }
-
     rewardDebt = rewardDebt.add(
-      _amount.mul((endBlock.sub(lastRewardBlock)).mul(rewardPerBlock)).div(rewardPerBlockPrecisionFactor)
+      actualAmount.mul((endBlock.sub(lastRewardBlock)).mul(rewardPerBlock)).div(rewardPerBlockPrecisionFactor)
     );
 
     if (user.amount > 0 && block.number > startBlock) {

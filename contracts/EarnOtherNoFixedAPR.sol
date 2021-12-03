@@ -14,12 +14,12 @@ contract EarnOtherNoFixedAPR is Ownable, ReentrancyGuard {
   using SafeMath for uint256;
   using SafeERC20 for ERC20;
 
-  /// @dev define from constructor 
-  uint256 public startBlock;
+  /// @dev define from constructor
+  uint256 public immutable startBlock;
   uint256 public rewardPerBlock;
-  ERC20 public stakedToken;
-  ERC20 public rewardToken;
-  bool private isMultiPool;
+  ERC20 public immutable stakedToken;
+  ERC20 public immutable rewardToken;
+  bool private immutable isMultiPool;
   uint256 private precisionFactor;
 
   /// @dev Pool accrued, total staked and last update from all users
@@ -54,10 +54,11 @@ contract EarnOtherNoFixedAPR is Ownable, ReentrancyGuard {
     startBlock = _startBlock;
 
     // Set the lastRewardBlock as the startBlock
-    lastRewardBlock = startBlock;
+    lastRewardBlock = _startBlock;
 
-    isMultiPool = (address(stakedToken) != address(rewardToken));
-    precisionFactor = 10**(_rewardToken.decimals() > _stakedToken.decimals() ? _rewardToken.decimals() : _stakedToken.decimals());
+    isMultiPool = (address(_stakedToken) != address(_rewardToken));
+    precisionFactor =
+      10**(_rewardToken.decimals() > _stakedToken.decimals() ? _rewardToken.decimals() : _stakedToken.decimals());
 
     transferOwnership(_admin);
   }
@@ -108,7 +109,7 @@ contract EarnOtherNoFixedAPR is Ownable, ReentrancyGuard {
 
   /// @notice claim an eligible reward
   /// @dev use for external and internal while deposit
-  function harvest() external {
+  function harvest() external nonReentrant {
     _updatePool();
 
     UserInfo storage user = userInfo[msg.sender];
@@ -119,9 +120,8 @@ contract EarnOtherNoFixedAPR is Ownable, ReentrancyGuard {
     }
 
     require(_isTransferable(_pendingReward), "insufficient reward");
-    rewardToken.safeTransfer(msg.sender, _pendingReward);
-
     user.rewardDebt = accumulatedReward;
+    rewardToken.safeTransfer(msg.sender, _pendingReward);
 
     emit Harvest(msg.sender, _pendingReward);
   }
