@@ -1,4 +1,4 @@
-//contracts/EarnOtherFixedAPRLockReward.sol
+//contracts/EarnOtherFixedAPRLockRewardWithChangeableRatio.sol
 // SPDX-License-Identifier: MIT
 
 pragma solidity 0.7.6;
@@ -10,7 +10,7 @@ import "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
 import "@openzeppelin/contracts/token/ERC20/ERC20.sol";
 import "@openzeppelin/contracts/token/ERC20/SafeERC20.sol";
 
-contract EarnOtherFixedAPRLockReward is Ownable, ReentrancyGuard {
+contract EarnOtherFixedAPRLockRewardWithChangeableRatio is Ownable, ReentrancyGuard {
   using SafeMath for uint256;
   using SafeERC20 for ERC20;
 
@@ -25,6 +25,7 @@ contract EarnOtherFixedAPRLockReward is Ownable, ReentrancyGuard {
   uint256 public immutable startBlock;
   uint256 public immutable endBlock;
   uint256 public immutable claimableBlock;
+  bool public isUpdateTokenRatio;
   ERC20 public immutable stakedToken;
   ERC20 public immutable rewardToken;
 
@@ -33,7 +34,8 @@ contract EarnOtherFixedAPRLockReward is Ownable, ReentrancyGuard {
   uint256 public immutable cap;
   uint256 private rewardPerBlock;
   uint256 private rewardPerBlockPrecisionFactor;
-  uint256 public immutable tokenRatio;
+  uint256 public tokenRatio;
+  uint256 private preActualTokenRatio;
   uint256 private actualTokenRatio;
 
   /// @dev Pool debt total staked from all users
@@ -53,6 +55,7 @@ contract EarnOtherFixedAPRLockReward is Ownable, ReentrancyGuard {
   event Withdraw(address indexed user, uint256 amount, uint256 rewards);
   event EmergencyWithdraw(address indexed user, uint256 amount);
   event RecoveryReward(address tokenRecovered, uint256 amount);
+  event UpdateTokenRatio(uint256 ratio, uint256 rewardDebt);
 
   constructor(
     ERC20 _stakedToken,
@@ -126,18 +129,35 @@ contract EarnOtherFixedAPRLockReward is Ownable, ReentrancyGuard {
   function pendingReward(address _for) external view returns (uint256) {
     require(_for != address(0), "bad address");
     UserInfo storage user = userInfo[_for];
+
     uint256 rewards = _calculateReward(user.amount, user.lastRewardBlock);
-    return user.rewards.add(rewards);
+    uint256 userRewards = user.rewards.add(rewards);
+
+    if (isUpdateTokenRatio) {
+      userRewards = (user.rewards.mul(actualTokenRatio).div(preActualTokenRatio)).add(rewards);
+    }
+
+    return userRewards;
   }
 
   function withdraw() external nonReentrant {
     require(block.number > endBlock, "not allow before end period");
+    require(isUpdateTokenRatio, "token ratio is not update yet");
     UserInfo storage user = userInfo[msg.sender];
 
     if (user.amount > 0) {
       uint256 withdrawAmount = user.amount;
+
+      // re-calculate user reward using new token ratio
+      user.rewards = user.rewards.mul(actualTokenRatio).div(preActualTokenRatio);
+
       uint256 rewards = _calculateReward(user.amount, user.lastRewardBlock);
       rewards = user.rewards.add(rewards);
+
+      // for last user who withdraw
+      if (rewards > rewardDebt) {
+        rewards = rewardDebt;
+      }
 
       rewardToken.safeTransfer(msg.sender, rewards);
       stakedToken.safeTransfer(msg.sender, withdrawAmount);
@@ -160,7 +180,11 @@ contract EarnOtherFixedAPRLockReward is Ownable, ReentrancyGuard {
     if (user.amount > 0) {
       uint256 withdrawAmount = user.amount;
       uint256 rewards = _calculateReward(user.amount, user.lastRewardBlock);
-      rewards = user.rewards.add(rewards);
+      uint256 userRewards = user.rewards.add(rewards);
+
+      if (isUpdateTokenRatio) {
+        userRewards = (user.rewards.mul(actualTokenRatio).div(preActualTokenRatio)).add(rewards);
+      }
 
       stakedToken.safeTransfer(msg.sender, withdrawAmount);
 
@@ -169,7 +193,7 @@ contract EarnOtherFixedAPRLockReward is Ownable, ReentrancyGuard {
       user.lastRewardBlock = endBlock;
 
       totalStaked = totalStaked.sub(withdrawAmount);
-      rewardDebt = rewardDebt.sub(rewards);
+      rewardDebt = rewardDebt.sub(userRewards);
 
       emit EmergencyWithdraw(msg.sender, withdrawAmount);
     }
@@ -186,6 +210,31 @@ contract EarnOtherFixedAPRLockReward is Ownable, ReentrancyGuard {
 
       emit RecoveryReward(_for, transferAmount);
     }
+  }
+
+  function updateTokenRatio(uint256 _ratio) external onlyOwner {
+    require(block.number > endBlock, "not allow before end period");
+    require(!isUpdateTokenRatio, "token ratio is already updated");
+
+    preActualTokenRatio = actualTokenRatio;
+
+    tokenRatio = _ratio;
+    actualTokenRatio = _ratio;
+
+    if (rewardToken.decimals() > stakedToken.decimals()) {
+      actualTokenRatio = tokenRatio.mul(10**(rewardToken.decimals() - stakedToken.decimals()));
+    }
+
+    if (rewardToken.decimals() < stakedToken.decimals()) {
+      actualTokenRatio = tokenRatio.div(10**(stakedToken.decimals() - rewardToken.decimals()));
+    }
+
+    rewardPerBlock = apr.mul(actualTokenRatio).div(BLOCK_PER_DAY.mul(DAY_PER_YEAR));
+    rewardDebt = rewardDebt.mul(actualTokenRatio).div(preActualTokenRatio);
+
+    isUpdateTokenRatio = true;
+
+    emit UpdateTokenRatio(_ratio, rewardDebt);
   }
 
   function _calculateReward(uint256 _amount, uint256 _fromBlock) internal view returns (uint256) {
