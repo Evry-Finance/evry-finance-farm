@@ -25,6 +25,7 @@ contract EarnOtherFixedAPR is Ownable, ReentrancyGuard {
   uint256 public immutable startBlock;
   uint256 public immutable endBlock;
   uint256 public immutable claimableBlock;
+  bool public immutable isLockWithdraw;
   ERC20 public immutable stakedToken;
   ERC20 public immutable rewardToken;
 
@@ -61,6 +62,7 @@ contract EarnOtherFixedAPR is Ownable, ReentrancyGuard {
     uint256 _tokenRatio,
     uint256 _startBlock,
     uint256 _endBlock,
+    bool _isLockWithdraw,
     address _admin
   ) {
     stakedToken = _stakedToken;
@@ -70,6 +72,7 @@ contract EarnOtherFixedAPR is Ownable, ReentrancyGuard {
     tokenRatio = _tokenRatio;
     startBlock = _startBlock;
     endBlock = _endBlock;
+    isLockWithdraw = _isLockWithdraw;
     claimableBlock = _startBlock;
     actualTokenRatio = _tokenRatio;
 
@@ -106,9 +109,7 @@ contract EarnOtherFixedAPR is Ownable, ReentrancyGuard {
     uint256 _postDeposit = stakedToken.balanceOf(address(this));
     uint256 _actualAmount = _postDeposit.sub(_preDeposit);
     totalStaked = totalStaked.add(_actualAmount);
-    rewardDebt = rewardDebt.add(
-      _actualAmount.mul((endBlock.sub(_lastRewardBlock())).mul(rewardPerBlock)).div(rewardPerBlockPrecisionFactor)
-    );
+    rewardDebt = rewardDebt.add(_calculateReward(_actualAmount, endBlock.sub(_lastRewardBlock())));
 
     require(rewardDebt <= rewardToken.balanceOf(address(this)), "insufficient reward reserve");
 
@@ -122,13 +123,13 @@ contract EarnOtherFixedAPR is Ownable, ReentrancyGuard {
   function pendingReward(address _for) external view returns (uint256) {
     require(_for != address(0), "bad address");
     UserInfo storage user = userInfo[_for];
-    return _calculateReward(user.amount, user.lastRewardBlock);
+    return calculateReward(user.amount, user.lastRewardBlock);
   }
 
   function harvest() public {
     UserInfo storage user = userInfo[msg.sender];
     if (user.amount > 0 && block.number > claimableBlock) {
-      uint256 _reward = _calculateReward(user.amount, user.lastRewardBlock);
+      uint256 _reward = calculateReward(user.amount, user.lastRewardBlock);
       rewardToken.safeTransfer(msg.sender, _reward);
       rewardDebt = rewardDebt.sub(_reward);
       emit Harvest(msg.sender, _reward);
@@ -136,17 +137,26 @@ contract EarnOtherFixedAPR is Ownable, ReentrancyGuard {
     user.lastRewardBlock = block.number;
   }
 
-  function withdraw() external nonReentrant {
-    require(block.number > endBlock, "not allow before end period");
+  function withdraw(uint256 _withdrawAmount) external nonReentrant {
+    if (isLockWithdraw) {
+      require(block.number > endBlock, "not allow before end period");
+    }
 
     UserInfo storage user = userInfo[msg.sender];
     if (user.amount > 0) {
       harvest();
 
-      uint256 _withdrawAmount = user.amount;
       stakedToken.safeTransfer(msg.sender, _withdrawAmount);
 
-      user.amount = 0;
+      if (endBlock >= block.number) {
+        uint256 _reward = calculateReward(_withdrawAmount, user.lastRewardBlock);
+        uint256 blockLeft = endBlock.sub(block.number);
+        uint256 amountLeft = user.amount.sub(_withdrawAmount);
+
+        rewardDebt = rewardDebt.add(_reward).sub(_calculateReward(user.amount.sub(amountLeft), blockLeft));
+      }
+
+      user.amount = user.amount.sub(_withdrawAmount);
       user.lastRewardBlock = _lastRewardBlock();
       totalStaked = totalStaked.sub(_withdrawAmount);
 
@@ -162,9 +172,9 @@ contract EarnOtherFixedAPR is Ownable, ReentrancyGuard {
     emit RecoveryReward(_for, unusedReward);
   }
 
-  function _calculateReward(uint256 _amount, uint256 _calculateFromBlock) internal view returns (uint256) {
+  function calculateReward(uint256 _amount, uint256 _calculateFromBlock) internal view returns (uint256) {
     uint256 toBlock = block.number;
-    if (toBlock <= _calculateFromBlock) {
+    if (toBlock <= _calculateFromBlock || endBlock <= _calculateFromBlock) {
       return 0;
     }
     if (toBlock > endBlock) {
@@ -172,7 +182,11 @@ contract EarnOtherFixedAPR is Ownable, ReentrancyGuard {
     }
 
     uint256 blocks = toBlock.sub(_calculateFromBlock);
-    return _amount.mul(blocks.mul(rewardPerBlock)).div(rewardPerBlockPrecisionFactor);
+    return _calculateReward(_amount, blocks);
+  }
+
+  function _calculateReward(uint256 _amount, uint256 _blocks) internal view returns (uint256) {
+    return _amount.mul(_blocks.mul(rewardPerBlock)).div(rewardPerBlockPrecisionFactor);
   }
 
   function _lastRewardBlock() internal view returns (uint256) {
