@@ -77,6 +77,8 @@ contract EarnOtherFixedAPRLockRewardWithChangeableRatio is Ownable, ReentrancyGu
     claimableBlock = _endBlock;
     actualTokenRatio = _tokenRatio;
 
+    require(_rewardToken != _stakedToken, "the staked token and the reward token should not be the same");
+
     if (_rewardToken.decimals() > _stakedToken.decimals()) {
       actualTokenRatio = _tokenRatio.mul(10**(_rewardToken.decimals() - _stakedToken.decimals()));
     }
@@ -114,6 +116,8 @@ contract EarnOtherFixedAPRLockRewardWithChangeableRatio is Ownable, ReentrancyGu
     rewardDebt = rewardDebt.add(
       actualAmount.mul((endBlock.sub(lastRewardBlock)).mul(rewardPerBlock)).div(rewardPerBlockPrecisionFactor)
     );
+
+    require(rewardDebt <= rewardToken.balanceOf(address(this)), "insufficient reward reserve");
 
     if (user.amount > 0 && block.number > startBlock) {
       uint256 rewards = _calculateReward(user.amount, user.lastRewardBlock);

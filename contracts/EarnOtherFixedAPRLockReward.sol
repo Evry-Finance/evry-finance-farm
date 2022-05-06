@@ -112,6 +112,12 @@ contract EarnOtherFixedAPRLockReward is Ownable, ReentrancyGuard {
       actualAmount.mul((endBlock.sub(lastRewardBlock)).mul(rewardPerBlock)).div(rewardPerBlockPrecisionFactor)
     );
 
+    if (stakedToken == rewardToken) {
+      require(rewardDebt <= rewardToken.balanceOf(address(this)).sub(totalStaked), "insufficient reward reserve");
+    } else {
+      require(rewardDebt <= rewardToken.balanceOf(address(this)), "insufficient reward reserve");
+    }
+
     if (user.amount > 0 && block.number > startBlock) {
       uint256 rewards = _calculateReward(user.amount, user.lastRewardBlock);
       user.rewards = user.rewards.add(rewards);

@@ -111,7 +111,11 @@ contract EarnOtherFixedAPR is Ownable, ReentrancyGuard {
     totalStaked = totalStaked.add(_actualAmount);
     rewardDebt = rewardDebt.add(_calculateReward(_actualAmount, endBlock.sub(_lastRewardBlock())));
 
-    require(rewardDebt <= rewardToken.balanceOf(address(this)), "insufficient reward reserve");
+    if (stakedToken == rewardToken) {
+      require(rewardDebt <= rewardToken.balanceOf(address(this)).sub(totalStaked), "insufficient reward reserve");
+    } else {
+      require(rewardDebt <= rewardToken.balanceOf(address(this)), "insufficient reward reserve");
+    }
 
     UserInfo storage user = userInfo[msg.sender];
     user.amount = user.amount.add(_actualAmount);
