@@ -184,14 +184,16 @@ contract EarnOtherFixedAPRLockReward is Ownable, ReentrancyGuard {
   function recoveryReward(address _for) external onlyOwner {
     require(block.number > endBlock, "not allow before end period");
 
-    uint256 rewardBalance = rewardToken.balanceOf(address(this));
-
-    if (rewardBalance > rewardDebt) {
-      uint256 transferAmount = rewardBalance.sub(rewardDebt);
-      rewardToken.safeTransfer(_for, transferAmount);
-
-      emit RecoveryReward(_for, transferAmount);
+    uint256 rewardBalance;
+    if (stakedToken == rewardToken) {
+      rewardBalance = rewardToken.balanceOf(address(this)).sub(totalStaked);
+    } else {
+      rewardBalance = rewardToken.balanceOf(address(this));
     }
+
+    uint256 transferAmount = rewardBalance.sub(rewardDebt);
+    rewardToken.safeTransfer(_for, transferAmount);
+    emit RecoveryReward(_for, transferAmount);
   }
 
   function _calculateReward(uint256 _amount, uint256 _fromBlock) internal view returns (uint256) {
